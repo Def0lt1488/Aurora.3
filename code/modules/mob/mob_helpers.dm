@@ -352,7 +352,7 @@ proc/Gibberish(t, p)//t is the inputted message, and any value higher than 70 fo
 	var/returntext = ""
 	for(var/i = 1, i <= length(t), i++)
 
-		var/letter = copytext_char(t, i, i+1)
+		var/letter = copytext(t, i, i+1)
 		if(prob(50))
 			if(p >= 70)
 				letter = ""
@@ -379,9 +379,9 @@ It's fairly easy to fix if dealing with single letters but not so much with comp
 		var/n_letter
 		var/n_mod = rand(1,4)
 		if(p+n_mod>n+1)
-			n_letter = copytext_char(te, p, n+1)
+			n_letter = copytext(te, p, n+1)
 		else
-			n_letter = copytext_char(te, p, p+n_mod)
+			n_letter = copytext(te, p, p+n_mod)
 		if (prob(50))
 			if (prob(30))
 				n_letter = text("[n_letter]-[n_letter]-[n_letter]")
