@@ -756,7 +756,6 @@ proc/is_blind(A)
 		l_store //Left and right pockets
 		r_store
 		s_store //Suit storage?
-
 		wear_mask,
 		wear_id
 		w_uniform //the uniform
@@ -766,9 +765,7 @@ proc/is_blind(A)
 		back
 		r_ear
 		l_ear
-
 		shoes
-
 	*/
 
 /obj/proc/report_onmob_location(var/justmoved, var/slot = null, var/mob/reportto)
