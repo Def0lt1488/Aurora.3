@@ -52,8 +52,8 @@
 
 	voice = GetVoice()
 
-	//No need to update all of these procs if the guy is dead.
-	if(stat != DEAD)
+	//No need to update all of these procs if the guy is dead or in stasis
+	if(stat != DEAD && !InStasis())
 		//Updates the number of stored chemicals for powers
 		handle_changeling()
 
@@ -69,6 +69,8 @@
 		handle_pain()
 
 		handle_medical_side_effects()
+
+		handle_fever()
 
 		//Handles regenerating stamina if we have sufficient air and no oxyloss
 		handle_stamina()
@@ -214,10 +216,12 @@
 				pixel_x = old_x
 				pixel_y = old_y
 				return
-	if (disabilities & STUTTERING)
-		speech_problem_flag = 1
-		if (prob(10))
-			stuttering = max(10, stuttering)
+	if(disabilities & STUTTERING)
+		var/aid = 1 + chem_effects[CE_NOSTUTTER]
+		if(aid < 3) //NOSTUTTER at 2 or above prevents it completely.
+			speech_problem_flag = 1
+			if(prob(10/aid))
+				stuttering = max(10/aid, stuttering)
 
 /mob/living/carbon/human/handle_mutations_and_radiation()
 	if(InStasis())
@@ -425,7 +429,7 @@
 	else if(adjusted_pressure >= species.hazard_low_pressure)
 		pressure_alert = -1
 	else
-		if(!(COLD_RESISTANCE in mutations))
+		if(!pressure_resistant())
 			var/list/obj/item/organ/external/organs = get_damageable_organs()
 			for(var/obj/item/organ/external/O in organs)
 				if(QDELETED(O))
@@ -623,22 +627,22 @@
 				if(prob(2))
 					to_chat(src, SPAN_WARNING(pick("The itch is becoming progressively worse.", "You need to scratch that itch!", "The itch isn't going!")))
 
-		if(CE_FEVER in chem_effects)
-			var/normal_temp = species?.body_temperature || (T0C+37)
-			var/fever = chem_effects[CE_FEVER]
-			if(CE_NOFEVER in chem_effects)
-				fever -= chem_effects[CE_NOFEVER] // a dose of 16u Perconol should offset a stage 4 virus
-			bodytemperature = Clamp(bodytemperature+fever, normal_temp, normal_temp + 9) // temperature should range from 37C to 46C, 98.6F to 115F
-			if(fever > 1)
-				if(prob(20/3)) // every 30 seconds, roughly
-					to_chat(src, SPAN_WARNING(pick("You feel cold and clammy...", "You shiver as if a breeze has passed through.", "Your muscles ache.", "You feel tired and fatigued.")))
-				if(prob(20)) // once every 10 seconds, roughly
-					drowsyness += 4
-				if(prob(20))
-					adjustHalLoss(15) // muscle pain from fever
-			if(fever >= 5) // your organs are boiling, figuratively speaking
-				var/obj/item/organ/internal/IO = pick(internal_organs)
-				IO.take_internal_damage(1)
+		sprint_speed_factor = species.sprint_speed_factor
+		max_stamina = species.stamina
+		stamina_recovery = species.stamina_recovery
+		sprint_cost_factor = species.sprint_cost_factor
+		move_delay_mod = 0
+
+		if(CE_ADRENALINE in chem_effects)
+			sprint_speed_factor += 0.1*chem_effects[CE_ADRENALINE]
+			max_stamina *= 1 + chem_effects[CE_ADRENALINE]
+			sprint_cost_factor -= 0.35 * chem_effects[CE_ADRENALINE]
+			stamina_recovery += max ((stamina_recovery * 0.7 * chem_effects[CE_ADRENALINE]), 5)
+
+		if(CE_SPEEDBOOST in chem_effects)
+			sprint_speed_factor += 0.2 * chem_effects[CE_SPEEDBOOST]
+			stamina_recovery *= 1 + 0.3 * chem_effects[CE_SPEEDBOOST]
+			move_delay_mod += -1.5 * chem_effects[CE_SPEEDBOOST]
 
 		var/total_phoronloss = 0
 		for(var/obj/item/I in src)
@@ -691,6 +695,11 @@
 	if(!isSynthetic())
 		handle_trace_chems()
 
+	for(var/_R in chem_doses)
+		if ((_R in bloodstr.reagent_volumes) || (_R in ingested.reagent_volumes) || (_R in breathing.reagent_volumes) || (_R in touching.reagent_volumes))
+			continue
+		chem_doses -= _R //We're no longer metabolizing this reagent. Remove it from chem_doses
+
 	updatehealth()
 
 	return //TODO: DEFERRED
@@ -720,7 +729,7 @@
 		if(hallucination && !(species.flags & (NO_POISON|IS_PLANT)))
 			handle_hallucinations()
 
-		if(get_shock() >= (species.total_health * 0.75))
+		if(get_shock() >= (species.total_health * 0.6))
 			if(!stat)
 				to_chat(src, "<span class='warning'>[species.halloss_message_self]</span>")
 				src.visible_message("<B>[src]</B> [species.halloss_message]")
@@ -728,12 +737,14 @@
 
 		if(paralysis || sleeping || InStasis())
 			blinded = TRUE
-			stat = UNCONSCIOUS
-			adjustHalLoss(-3)
+			if(sleeping)
+				stat = UNCONSCIOUS
+
+			adjustHalLoss(-5)
 			if (species.tail)
 				animate_tail_reset()
 			if(prob(2) && is_asystole() && isSynthetic())
-				visible_message("<b>[src]</b> [pick("emits low pitched whirr","beeps urgently")]")
+				visible_message("<b>[src]</b> [pick("emits low pitched whirr","beeps urgently")].")
 
 		if(paralysis)
 			AdjustParalysis(-1)
@@ -810,7 +821,7 @@
 		return
 
 	if(stat != DEAD)
-		if(stat == UNCONSCIOUS && health < maxHealth / 2)
+		if((stat == UNCONSCIOUS && health < maxHealth / 2) || paralysis || InStasis())
 			//Critical damage passage overlay
 			var/severity = 0
 			switch(health - maxHealth/2)
@@ -824,6 +835,8 @@
 				if(-90 to -80)			severity = 8
 				if(-95 to -90)			severity = 9
 				if(-INFINITY to -95)	severity = 10
+			if(paralysis || InStasis())
+				severity = max(severity, 8)
 			overlay_fullscreen("crit", /obj/screen/fullscreen/crit, severity)
 		else
 			clear_fullscreen("crit")
@@ -857,6 +870,12 @@
 			overlay_fullscreen("brute", /obj/screen/fullscreen/brute, severity)
 		else
 			clear_fullscreen("brute")
+
+		if(paralysis_indicator)
+			if(paralysis)
+				paralysis_indicator.icon_state = "paralysis1"
+			else
+				paralysis_indicator.icon_state = "paralysis0"
 
 		if(healths)
 			healths.overlays.Cut()
@@ -940,7 +959,7 @@
 
 			if(isSynthetic())
 				var/obj/item/organ/internal/cell/IC = internal_organs_by_name[BP_CELL]
-				if (istype(IC))
+				if(istype(IC) && IC.is_usable())
 					var/chargeNum = Clamp(Ceiling(IC.percent()/25), 0, 4)	//0-100 maps to 0-4, but give it a paranoid clamp just in case.
 					cells.icon_state = "charge[chargeNum]"
 				else
@@ -1056,16 +1075,22 @@
 /mob/living/carbon/human/proc/handle_shock()
 	if(status_flags & GODMODE)
 		return 0
+	var/is_asystole = is_asystole()
+	if(is_asystole && isSynthetic())
+		if(!lying && !buckled_to)
+			to_chat(src, SPAN_WARNING("You don't have enough energy to function!"))
+		Paralyse(3)
+		return
 	if(!can_feel_pain())
 		return
 
-	if(is_asystole())
+	if(is_asystole)
 		shock_stage = max(shock_stage + 1, 61)
 
 	var/traumatic_shock = get_shock()
 	if(traumatic_shock >= max(30, 0.8*shock_stage))
 		shock_stage += 1
-	else if (!is_asystole())
+	else if (!is_asystole)
 		shock_stage = min(shock_stage, 160)
 		var/recovery = 1
 		if(traumatic_shock < 0.5 * shock_stage) //lower shock faster if pain is gone completely
@@ -1123,10 +1148,12 @@
 */
 
 
-/mob/living/carbon/human/proc/handle_hud_list()
+/mob/living/carbon/human/proc/handle_hud_list(var/force_update = FALSE)
+	if(force_update)
+		hud_updateflag = 1022
 	if (BITTEST(hud_updateflag, HEALTH_HUD) && hud_list[HEALTH_HUD])
 		var/image/holder = hud_list[HEALTH_HUD]
-		if(stat == DEAD)
+		if(stat == DEAD || (status_flags & FAKEDEATH))
 			holder.icon_state = "0" 	// X_X
 		else if(is_asystole())
 			holder.icon_state = "flatline"
@@ -1136,7 +1163,7 @@
 
 	if (BITTEST(hud_updateflag, LIFE_HUD) && hud_list[LIFE_HUD])
 		var/image/holder = hud_list[LIFE_HUD]
-		if(stat == DEAD)
+		if(stat == DEAD || (status_flags & FAKEDEATH))
 			holder.icon_state = "huddead"
 		else
 			holder.icon_state = "hudhealthy"
@@ -1144,7 +1171,7 @@
 
 	if (BITTEST(hud_updateflag, STATUS_HUD) && hud_list[STATUS_HUD] && hud_list[STATUS_HUD_OOC])
 		var/image/holder = hud_list[STATUS_HUD]
-		if(stat == DEAD)
+		if(stat == DEAD || (status_flags & FAKEDEATH))
 			holder.icon_state = "huddead"
 		else if(status_flags & XENO_HOST)
 			holder.icon_state = "hudxeno"
@@ -1152,7 +1179,7 @@
 			holder.icon_state = "hudhealthy"
 
 		var/image/holder2 = hud_list[STATUS_HUD_OOC]
-		if(stat == DEAD)
+		if(stat == DEAD || (status_flags & FAKEDEATH))
 			holder2.icon_state = "huddead"
 		else if(status_flags & XENO_HOST)
 			holder2.icon_state = "hudxeno"
@@ -1370,3 +1397,51 @@
 		damageoverlay.cut_overlay(last_oxy_overlay)
 		last_oxy_overlay = null
 
+//Fevers
+//This handles infection fevers as well as fevers caused by chem effects
+/mob/living/carbon/human/proc/handle_fever()
+	var/normal_temp = species?.body_temperature || (T0C+37)
+	//If we have infections, they give us a fever. Get all of their germ levels and find what our bodytemp will raise by.
+	var/fever = get_infection_germ_level() / INFECTION_LEVEL_ONE
+	//See what chemicals in our body affect our fever for better or worse
+	if(CE_FEVER in chem_effects)
+		fever += chem_effects[CE_FEVER]
+	if(CE_NOFEVER in chem_effects)
+		fever -= chem_effects[CE_NOFEVER]
+
+	//Apply changes to body temp. I absolutely hate body temp code -Doxx
+	if(fever < 0) //If we have enough anti-fever meds to bring us back towards normal temperature, do so.
+		if(bodytemperature >= normal_temp)  //We don't have any effect if we're colder than normal.
+			bodytemperature = max(bodytemperature + fever, normal_temp)
+		return
+	if(fever > 0) //We're getting a fever, raise body temp. 10C above normal is our max for fevers.
+		if(bodytemperature < normal_temp) //If we're colder than usual, we'll slowly raise to normal temperature
+			bodytemperature = min(bodytemperature + fever, normal_temp)
+		else if(bodytemperature <= normal_temp + 10) //If we're hotter than max due to like, being on fire, don't keep increasing.
+			bodytemperature = normal_temp + min(fever, 10) //We use normal_temp here to maintain a steady temperature, otherwise even a small infection steadily increases bodytemp to max. This way it's easier to diagnose the intensity of an infection based on how bad the fever is.
+	//Apply side effects for having a fever. Separate from body temp changes. 
+	if(fever >= 2)
+		do_fever_effects(fever)
+
+		
+//Getting the total germ level for all infected organs, affects fever
+/mob/living/carbon/human/proc/get_infection_germ_level()
+	var/germs
+	for(var/obj/item/organ/I in internal_organs)
+		if(I.is_infected())
+			germs += I.germ_level
+	for(var/obj/item/organ/external/E in organs)
+		if(E.is_infected())
+			germs += E.germ_level
+	return germs
+
+/mob/living/carbon/human/proc/do_fever_effects(var/fever)
+	if(prob(20/3)) // every 30 seconds, roughly
+		to_chat(src, SPAN_WARNING(pick("You feel cold and clammy...", "You shiver as if a breeze has passed through.", "Your muscles ache.", "You feel tired and fatigued.")))
+	if(prob(20)) // once every 10 seconds, roughly
+		drowsyness += 4
+	if(prob(20))
+		adjustHalLoss(5 * min(fever, 5)) // muscle pain from fever
+	if(fever >= 7 && prob(10)) // your organs are boiling, figuratively speaking
+		var/obj/item/organ/internal/IO = pick(internal_organs)
+		IO.take_internal_damage(1)

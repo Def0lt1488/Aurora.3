@@ -30,7 +30,7 @@
 	user.drop_item()
 	playsound(src.loc, 'sound/items/package_unwrap.ogg', 50,1)
 	if(src.gift)
-		user.put_in_active_hand(gift)
+		user.put_in_hands(gift)
 		src.gift.add_fingerprint(user)
 	else
 		to_chat(user, "<span class='warning'>The gift was empty!</span>")
@@ -173,7 +173,7 @@
 		/obj/item/storage/box/fancy/crayons,
 		/obj/item/soap/deluxe,
 		/obj/item/pen/invisible,
-		/obj/item/clothing/gloves/watch,
+		/obj/item/clothing/wrists/watch,
 		/obj/item/lipstick/random,
 		/obj/item/clothing/shoes/carp,
 		/obj/item/bikehorn,
@@ -244,7 +244,6 @@
 
 /obj/item/xmasgift/medium/get_gift_type()
 	var/picked_gift_type = pick(
-		/obj/item/sord,
 		/obj/random/booze,
 		/obj/random/random_flag,
 		/obj/item/storage/belt/champion,
